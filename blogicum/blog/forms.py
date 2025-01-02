@@ -1,8 +1,7 @@
-from django.forms import ModelForm, DateTimeInput
-
 from django.contrib.auth import get_user_model
+from django.forms import DateTimeInput, ModelForm, Textarea
 
-from .models import Post, Comment
+from .models import Comment, Post
 
 
 class PostForm(ModelForm):
@@ -32,3 +31,6 @@ class CommentForm(ModelForm):
     class Meta:
         model = Comment
         fields = ('text',)
+        widgets = {
+            'text': Textarea(attrs={'rows': '4'})
+        }

@@ -1,9 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.db import models
 
-from core.constants import MAX_FIELD_LEN
+from core.constants import DISPLAY_CHARS, MAX_FIELD_LEN
 from core.models import DefaultModel
-
 
 User = get_user_model()
 
@@ -19,7 +18,7 @@ class Location(DefaultModel):
         verbose_name_plural = 'Местоположения'
 
     def __str__(self) -> str:
-        return self.name
+        return self.name[:DISPLAY_CHARS]
 
 
 class Category(DefaultModel):
@@ -44,7 +43,7 @@ class Category(DefaultModel):
         verbose_name_plural = 'Категории'
 
     def __str__(self) -> str:
-        return self.title
+        return self.title[:DISPLAY_CHARS]
 
 
 class Post(DefaultModel):
@@ -66,7 +65,6 @@ class Post(DefaultModel):
         User,
         on_delete=models.CASCADE,
         verbose_name='Автор публикации',
-        related_name='posts'
     )
     location = models.ForeignKey(
         Location,
@@ -74,14 +72,12 @@ class Post(DefaultModel):
         null=True,
         on_delete=models.SET_NULL,
         verbose_name='Местоположение',
-        related_name='posts'
     )
     category = models.ForeignKey(
         Category,
         null=True,
         on_delete=models.SET_NULL,
         verbose_name='Категория',
-        related_name='posts'
     )
     image = models.ImageField(
         'Изображение',
@@ -90,6 +86,7 @@ class Post(DefaultModel):
     )
 
     class Meta:
+        default_related_name = 'posts'
         verbose_name = 'публикация'
         verbose_name_plural = 'Публикации'
         ordering = (
@@ -97,11 +94,7 @@ class Post(DefaultModel):
         )
 
     def __str__(self) -> str:
-        return self.title
-
-    @property
-    def comment_count(self):
-        return self.comments.count()
+        return self.title[:DISPLAY_CHARS]
 
 
 class Comment(models.Model):
@@ -109,13 +102,11 @@ class Comment(models.Model):
     author = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='comments',
         verbose_name='Автор комментария'
     )
     post = models.ForeignKey(
         Post,
         on_delete=models.CASCADE,
-        related_name='comments',
         verbose_name='Пост'
     )
     created_at = models.DateTimeField(
@@ -124,8 +115,9 @@ class Comment(models.Model):
     )
 
     class Meta:
+        default_related_name = 'comments'
         verbose_name = 'комментарий'
         verbose_name_plural = 'Комментарии'
 
     def __str__(self):
-        return self.comment
+        return f'{self.text[:DISPLAY_CHARS]} | {self.post} | {self.author}'

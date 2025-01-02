@@ -1,110 +1,72 @@
-from django.core.paginator import Paginator
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.mixins import UserPassesTestMixin, LoginRequiredMixin
-from django.http import Http404
-from django.shortcuts import render, get_object_or_404, redirect
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db.models import Count, Q
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse_lazy
 from django.utils import timezone
-from django.views.generic import (
-    DetailView, ListView, CreateView, DeleteView
-)
+from django.views.generic import CreateView, DeleteView, DetailView, ListView
 from django.views.generic.edit import UpdateView
 
 from core.constants import DISPLAY_COUNT
-from .forms import PostForm, ProfileUpdateForm, CommentForm
-from .models import Post, Category, Comment
+from core.mixins import (CommentMixin, PermissionTestMixin, PostMixin,
+                         PostUrlMixin, UserUrlMixin)
+from core.utils import get_page_object, get_post_list, posts_for_display
+from .forms import CommentForm, PostForm, ProfileUpdateForm
+from .models import Category, Post
 
 User = get_user_model()
-
-
-class PostMixin:
-    model = Post
-    pk_url_kwarg = 'post_id'
-    template_name = 'blog/create.html'
-
-
-class CommentMixin:
-    model = Comment
-    template_name = 'blog/comment.html'
-    pk_url_kwarg = 'comment_id'
-
-
-class PermissionTestMixin(UserPassesTestMixin):
-    def test_func(self):
-        return self.get_object().author == self.request.user
-
-
-def get_post_list():
-    return (
-        Post.objects.select_related('category', 'author', 'location')
-    )
 
 
 class IndexView(ListView):
     model = Post
     template_name = 'blog/index.html'
-    queryset = get_post_list().filter(
-        pub_date__lte=timezone.now(),
-        is_published=True,
-        category__is_published=True
+    queryset = (
+        posts_for_display()
+        .annotate(comment_count=Count('comments'))
+        .order_by('-pub_date')
     )
     paginate_by = DISPLAY_COUNT
 
 
 def category_posts(request, category_slug):
-    template_name = 'blog/category.html'
     category = get_object_or_404(
-        Category.objects.filter(
+        Category.objects
+        .filter(
             is_published=True
         ),
         slug=category_slug
     )
     post_list = (
-        category.posts
-        .select_related(
-            'category',
-            'author',
-            'location'
-        )
-        .filter(
-            pub_date__lte=timezone.now(),
-            is_published=True
-        )
+        posts_for_display()
+        .filter(category=category)
+        .annotate(comment_count=Count('comments'))
+        .order_by('-pub_date')
     )
-    paginator = Paginator(post_list, DISPLAY_COUNT)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
     context = {
         'category': category,
-        'post_list': post_list,
-        'page_obj': page_obj
+        'page_obj': get_page_object(request, post_list, DISPLAY_COUNT)
     }
-    return render(request, template_name, context)
+    return render(request, 'blog/category.html', context)
 
 
-class PostCreateView(LoginRequiredMixin, PostMixin, CreateView):
+class PostCreateView(LoginRequiredMixin, UserUrlMixin, PostMixin, CreateView):
     form_class = PostForm
 
     def form_valid(self, form):
         form.instance.author = self.request.user
         return super().form_valid(form)
 
-    def get_success_url(self):
-        return f'/profile/{self.request.user.username}/'
 
-
-class PostEditView(PermissionTestMixin, PostMixin, UpdateView):
+class PostEditView(PermissionTestMixin, PostMixin, PostUrlMixin, UpdateView):
     form_class = PostForm
-
-    def get_success_url(self):
-        return f'/posts/{self.kwargs["post_id"]}/'
 
     def handle_no_permission(self):
         return redirect(self.get_success_url())
 
 
 class PostDeleteView(PermissionTestMixin, PostMixin, DeleteView):
-    success_url = '/'
+    success_url = reverse_lazy('blog:index')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -112,28 +74,27 @@ class PostDeleteView(PermissionTestMixin, PostMixin, DeleteView):
         return context
 
 
-class PostDetailView(PostMixin, DetailView):
+class PostDetailView(LoginRequiredMixin, PostMixin, DetailView):
     template_name = 'blog/detail.html'
 
     def get_object(self):
         post = get_object_or_404(
-            get_post_list(),
-            pk=self.kwargs['post_id']
+            get_post_list()
+            .filter(
+                (
+                    Q(is_published=True)
+                    & Q(category__is_published=True)
+                    & Q(pub_date__lte=timezone.now())
+                ) | Q(author=self.request.user)
+            ),
+            pk=self.kwargs['post_id'],
         )
-        if (
-            (post.is_published and post.category.is_published
-             and post.pub_date <= timezone.now()
-             )
-            or post.author == self.request.user
-        ):
-            return post
-        else:
-            raise Http404()
+        return post
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['form'] = CommentForm()
-        context['comments'] = self.object.comments.all()
+        context['comments'] = self.object.comments.select_related('author')
         return context
 
 
@@ -149,18 +110,16 @@ def comment_create(request, post_id):
     return redirect('blog:post_detail', post_id=post_id)
 
 
-class CommentUpdateView(PermissionTestMixin, CommentMixin, UpdateView):
+class CommentUpdateView(
+    PermissionTestMixin, PostUrlMixin, CommentMixin, UpdateView
+):
     form_class = CommentForm
 
-    def get_success_url(self):
-        return f'/posts/{self.kwargs.get("post_id")}'
 
-
-class CommentDeleteView(PermissionTestMixin, CommentMixin, DeleteView):
+class CommentDeleteView(
+    PermissionTestMixin, PostUrlMixin, CommentMixin, DeleteView
+):
     context_object_name = 'comment'
-
-    def get_success_url(self):
-        return f'/posts/{self.kwargs.get("post_id")}'
 
 
 def profile(request, username):
@@ -168,24 +127,31 @@ def profile(request, username):
         User,
         username=username
     )
-    post_list = get_post_list().filter(author=user)
-    paginator = Paginator(post_list, DISPLAY_COUNT)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
+    if request.user == user:
+        post_list = (
+            get_post_list()
+            .filter(author=user)
+            .annotate(comment_count=Count('comments'))
+            .order_by('-pub_date')
+        )
+    else:
+        post_list = (
+            posts_for_display()
+            .filter(author=user)
+            .annotate(comment_count=Count('comments'))
+            .order_by('-pub_date')
+        )
     context = {
-        'page_obj': page_obj,
+        'page_obj': get_page_object(request, post_list, DISPLAY_COUNT),
         'profile': user
     }
     return render(request, 'blog/profile.html', context)
 
 
-class ProfileUpdateView(LoginRequiredMixin, UpdateView):
+class ProfileUpdateView(LoginRequiredMixin, UserUrlMixin, UpdateView):
     form_class = ProfileUpdateForm
     model = User
     template_name = 'blog/user.html'
-
-    def get_success_url(self):
-        return f'/profile/{self.request.user.username}/'
 
     def get_object(self):
         return self.request.user

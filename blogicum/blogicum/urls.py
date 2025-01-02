@@ -7,10 +7,6 @@ from django.views.generic.edit import CreateView
 
 urlpatterns = [
     path(
-        route='',
-        view=include('blog.urls')
-    ),
-    path(
         route='pages/',
         view=include('pages.urls')
     ),
@@ -31,7 +27,16 @@ urlpatterns = [
         route='auth/',
         view=include('django.contrib.auth.urls')
     ),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    path(
+        route='',
+        view=include('blog.urls')
+    ),
+]
+if settings.DEBUG:
+    urlpatterns += static(
+        settings.MEDIA_URL,
+        document_root=settings.MEDIA_ROOT
+    )
 
 handler403 = 'pages.views.csrf_permission_denied'
 
