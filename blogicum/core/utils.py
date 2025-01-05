@@ -1,4 +1,5 @@
 from django.core.paginator import Paginator
+from django.db.models import Count
 from django.utils import timezone
 from blog.models import Post
 
@@ -25,3 +26,12 @@ def posts_for_display():
             category__is_published=True
         )
     )
+
+
+def count_and_order(queryset):
+    result_queryset = (
+        queryset
+        .annotate(comment_count=Count('comments'))
+        .order_by('-pub_date')
+    )
+    return result_queryset
